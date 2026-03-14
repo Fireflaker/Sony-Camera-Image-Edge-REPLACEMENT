@@ -1,0 +1,39 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Large binary / APK files
+*.apk
+*.xapk
+*.pdf
+*.bin
+
+# Generated output — liveview frames and capture logs
+frame_debug/
+liveview-url.txt
+liveview-acquire.log
+
+# Temp / credential files (contain Wi-Fi passwords)
+_tmp_cam_profile.xml
+sony-liveview-temp.xml
+
+# ImagingEdge4Linux nested git and generated files
+ImagingEdge4Linux/.git/
+ImagingEdge4Linux/.git_bak/
+ImagingEdge4Linux/__pycache__/
+ImagingEdge4Linux/downloads/
+ImagingEdge4Linux/*.log
+
+# VS Code / editor state
+.vscode/
+*.code-workspace
+
+# OS noise
+.DS_Store
+Thumbs.db
