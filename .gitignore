@@ -18,6 +18,8 @@ build/
 frame_debug/
 liveview-url.txt
 liveview-acquire.log
+backup/
+*.pid
 
 # Temp / credential files (contain Wi-Fi passwords)
 _tmp_cam_profile.xml
@@ -29,6 +31,7 @@ ImagingEdge4Linux/.git_bak/
 ImagingEdge4Linux/__pycache__/
 ImagingEdge4Linux/downloads/
 ImagingEdge4Linux/*.log
+ImagingEdge4Linux/liveview_webui_v1.py
 
 # VS Code / editor state
 .vscode/

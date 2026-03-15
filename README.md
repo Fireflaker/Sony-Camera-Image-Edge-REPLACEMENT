@@ -1,208 +1,86 @@
-# Sony Camera — Imaging Edge REPLACEMENT
+# Sony Camera Imaging Edge Replacement
 
-Open-source toolkit to replace Sony Imaging Edge Mobile for the Sony a6400 (and compatible Alpha / Cyber-shot cameras) on Windows and Linux without the app.
+This workspace contains a Windows-first replacement workflow for Sony Imaging Edge Mobile, centered on a Sony a6400, a local browser bridge, and an optional Frigate integration that can trigger recording on the camera itself.
 
----
+## What works now
 
-## What this is
+- Local live preview bridge from Sony's Wi-Fi JSON-RPC API via [ImagingEdge4Linux/liveview_webui.py](ImagingEdge4Linux/liveview_webui.py)
+- Browser UI for preview, status, half-press, shutter, and start/stop movie recording
+- Transfer-mode browsing and bulk ZIP download of files exposed by the camera's SOAP transfer service
+- HTTP-to-RTSP relay for Frigate via [ffmpeg_rtsp_relay_loop.ps1](ffmpeg_rtsp_relay_loop.ps1) and [ImagingEdge4Linux/mediamtx.yml](ImagingEdge4Linux/mediamtx.yml)
+- Frigate event polling that can request on-camera SD-card recording via [frigate_trigger_sony_sd_record.ps1](frigate_trigger_sony_sd_record.ps1)
 
-Sony's "Imaging Edge Mobile" app is the only official way to:
-- Pull images over Wi-Fi
-- See a live view on a secondary screen
-- Remotely trigger photo/video recording
+## Current architecture
 
-This repository contains everything reverse-engineered and built to replace that app entirely via Python, PowerShell, and shell scripts.
+There are two distinct Sony workflows and they must not be mixed:
 
----
+- Preview Stream Mode: camera menu `Ctrl w/ Smartphone`; used for liveview and JSON-RPC controls
+- Transfer Mode: camera menu `Send to Smartphone / Sharing`; used for SOAP file listing and download
 
-## Camera Compatibility
+Main files:
 
-Tested live against: **Sony ILCE-6400 (a6400)** firmware 2.0, Smart Remote Control `__SAK__` v2.1.7
+- [ImagingEdge4Linux/liveview_webui.py](ImagingEdge4Linux/liveview_webui.py): Sony bridge and browser UI
+- [start_sony_frigate_wizard_bridge.ps1](start_sony_frigate_wizard_bridge.ps1): launches bridge, MediaMTX, ffmpeg relay, and optional Frigate SD-trigger loop
+- [frigate_trigger_sony_sd_record.ps1](frigate_trigger_sony_sd_record.ps1): polls Frigate events and calls the bridge start/stop movie endpoints
+- [LIVEVIEW_REVERSE_ENGINEERING_REPORT.md](LIVEVIEW_REVERSE_ENGINEERING_REPORT.md): packet-level notes and quality-limit findings
 
-Should work on any Sony Alpha / Cyber-shot that supports the **Sony Camera Remote API** (the JSON-RPC HTTP API). See [ImagingEdge4Linux/README.md](ImagingEdge4Linux/README.md) for the full compatibility matrix for the SOAP image-transfer API.
+## Frigate integration
 
----
+The intended Frigate flow is:
 
-## Two Independent Sony Wi-Fi Protocols
+1. Frigate reads the relay stream from the local bridge.
+2. Frigate detects objects on that relay stream.
+3. Detection events are polled locally.
+4. The trigger loop calls the Sony bridge to start or stop movie recording on the camera SD card.
 
-| Protocol | Port | Use Case | Our tools |
-|----------|------|----------|-----------|
-| **Sony Camera Remote API** (JSON-RPC over HTTP) | `10000` | Live view, remote shutter, movie rec, exposure control | `reverse_probe.py`, `frame_check.py`, `acquire-liveview.ps1`, `ImagingEdge4Linux/liveview_webui.py` |
-| **SOAP / UPnP image transfer** | `64321` | Download images from camera to PC after shooting | `ImagingEdge4Linux/imaging-edge.py` |
+Important: the goal is not to save the low-quality preview stream as the final recording. The preview stream is detection input only; the desired final recording is made by the camera itself.
 
----
+The current local defaults were set up for this environment:
 
-## Quick Start (Live View on PC)
+- Frigate username: `sonyguard`
+- Frigate password: `SonyGuard!2026`
 
-### Prerequisites
-```
-pip install pillow numpy requests
-```
+If this repository is pushed anywhere outside a private environment, rotate those values first.
 
-### 1 — Connect to camera Wi-Fi
-Camera must be in **Smart Remote Control** mode (Menu → Network → Ctrl with Smartphone → Smart Remote).
+## Known limits
 
-PowerShell (auto-scans for camera SSID, connects, gets liveview URL):
-```powershell
-.\acquire-liveview.ps1 -WifiPassword YOUR_CAMERA_PASSWORD
-```
+### Liveview quality
 
-Or use the Python script directly (hardcodes password, edit before use):
-```
-python reverse_probe.py
-```
+The Sony Wi-Fi liveview endpoint still appears to be limited to Sony's proprietary framed JPEG preview stream. Current reverse-engineering work did not find a public JSON-RPC method like `startLiveviewWithSize`, `getAvailableLiveviewSize`, or similar on this camera/workflow.
 
-### 2 — Watch live view in browser
-```
-cd ImagingEdge4Linux
-python liveview_webui.py
-```
-Open `http://localhost:8080` — shows live JPEG feed with Start/Stop recording buttons.
+Practical conclusion:
 
-### 3 — Download images (after shooting)
-```
-cd ImagingEdge4Linux
-python imaging-edge.py
-```
+- The bridge can stabilize and relay the preview stream.
+- Frigate can consume that preview stream.
+- No confirmed higher-quality Wi-Fi liveview path has been found yet for the a6400 through the exposed JSON-RPC API.
 
----
+Likely escalation paths, if better video is still required:
 
-## Repository Layout
+- USB/PTP or service-mode work similar to PMCA / OpenMemories research
+- HDMI capture for true higher-quality live monitoring
+- Camera-side firmware/service-mode investigation rather than ordinary Wi-Fi API calls
 
-```
-reverse_probe.py          # Connect to camera Wi-Fi, init API, save liveview stream
-frame_check.py            # Decode liveview stream → extract JPEG frames, compute diffs
-apk_string_probe.py       # Scrape Sony APK .dex files for protocol strings
-acquire-liveview.ps1      # PowerShell: auto scan/connect/liveview URL retrieval
-sony-wlan-profile.xml     # WLAN XML profile template for camera AP connection
-LIVEVIEW_REVERSE_ENGINEERING_REPORT.md   # Field notes from live reverse engineering
-ptp_property_reference.md # Full Sony PTP property code table (D200–D2D9)
+### SD-record trigger reliability
 
-ImagingEdge4Linux/
-  imaging-edge.py         # SOAP/UPnP image transfer (original project by @MaxKrauss)
-  liveview_webui.py       # HTTP server: live view browser UI + movie record controls
-  autoconnect.sh          # Linux: auto Wi-Fi connect + run imaging-edge.py
-  autoconnect-macos.sh    # macOS: same
+The automation framework is in place, but the Sony control path still has an intermittent issue: preview frames can continue flowing while `startMovieRec` occasionally fails or hangs. The bridge now treats recent frame activity as proof that the Wi-Fi Direct session is still alive, which avoids some false reconnect attempts, but this path still needs real-world validation under motion events.
 
-frame_debug/              # Last captured JPEG frames (auto-generated by frame_check.py)
-```
+## Running locally
 
----
+Typical local startup:
 
-## Sony Camera Remote API — Services & Methods
+- Put the camera in `Ctrl w/ Smartphone`
+- Run [start_sony_frigate_wizard_bridge.ps1](start_sony_frigate_wizard_bridge.ps1)
+- Open the bridge UI or point Frigate at the emitted RTSP URL
 
-Base URL: `http://192.168.122.1:10000/sony/{service}`  
-Method: HTTP POST, `Content-Type: application/json`  
-Format: `{"method":"...", "params":[...], "id":1, "version":"1.0"}`
+When you want to browse camera files instead:
 
-### Confirmed services on a6400
+- Put the camera in `Send to Smartphone / Sharing`
+- Use the Transfer Mode controls in the bridge UI
 
-| Service | Path | Notable methods |
-|---------|------|-----------------|
-| `camera` | `/sony/camera` | `getVersions`, `getAvailableApiList`, `getEvent`, `startRecMode`, `startLiveview`, `stopLiveview`, `startMovieRec`, `stopMovieRec`, `actTakePicture`, `setExposureMode`, `setISO`, `setShutterSpeed` … (50 total) |
-| `system` | `/sony/system` | `getSystemInformation`, `getStorageInformation` |
-| `accessControl` | `/sony/accessControl` | `actEnableMethods` (with `developerName`, `developerID`, `sg`, `methods` params) |
-| `avContent` | `/sony/avContent` | Content list / playback |
-| `guide` | `/sony/guide` | `getMethodTypes` |
-| `appControl` | `/sony/appControl` | App-level control |
-| `localloopback` | `/sony/localloopback` | `localLoopback` |
-| **`shutdown`** | `/sony/shutdown` | **`actShutdown`** — remotely power off the camera |
+## Related upstream work
 
-### Minimal Python API caller
-```python
-import json
-from urllib.request import Request, urlopen
+- [ImagingEdge4Linux/README.md](ImagingEdge4Linux/README.md)
+- `ma1co/Sony-PMCA-RE`
+- `frank26080115/alpha-fairy`
 
-def sony(method, params=None, service="camera"):
-    url = f"http://192.168.122.1:10000/sony/{service}"
-    body = json.dumps({"method": method, "params": params or [], "id": 1, "version": "1.0"}).encode()
-    req = Request(url, data=body, headers={"Content-Type": "application/json"})
-    with urlopen(req, timeout=6) as r:
-        return json.loads(r.read())
-
-# Examples:
-print(sony("getApplicationInfo"))       # → ['Smart Remote Control __SAK__', '2.1.7']
-print(sony("getVersions"))              # → ['1.0','1.1','1.2','1.3','1.4','1.5','1.6','1.7','1.8']
-lv = sony("startLiveview")             # → {'result': ['http://192.168.122.1:60152/liveviewstream?...']}
-sony("actShutdown", service="shutdown") # power off
-```
-
----
-
-## Liveview Stream Format
-
-The URL returned by `startLiveview` is **not** a standard MJPEG HTTP stream.
-
-It is a **Sony framed binary stream** over plain HTTP:
-
-```
-Per-chunk layout:
-  Byte 0:      0xFF  (marker)
-  Byte 1:      0x01  (payload type: JPEG frame)
-  Bytes 2-3:   sequence number (big-endian uint16, increments per frame)
-  Bytes 4-7:   timestamp in ms (big-endian uint32)
-  Bytes 8-11:  (reserved / padding)
-  Bytes 12-15: payload size hint (big-endian uint32)
-  Bytes 16-127: (padding / reserved, total header = 128 bytes)
-  Bytes 128+:  JPEG payload (starts with FF D8, ends with FF D9)
-```
-
-Simplest decode — scan for JPEG boundaries:
-```python
-# Works regardless of header layout:
-start = data.find(b'\xff\xd8')
-end   = data.find(b'\xff\xd9', start) + 2
-jpeg  = data[start:end]
-```
-
----
-
-## PTP Property Codes
-
-See [ptp_property_reference.md](ptp_property_reference.md) for the complete annotated table of all `0xD200`–`0xD2D9` Sony PTP device properties, decoded from libgphoto2 source + live a6400 `gphoto2 --list-all-config` dump.
-
-### Sony PTP Opcodes (USB/PTP transport)
-
-| Opcode | Name | Description |
-|--------|------|-------------|
-| `0x9201` | `SDIOConnect` | Auth handshake — call with params (1,0,0), (2,0,0), (3,0,0) |
-| `0x9202` | `SDIOGetExtDeviceInfo` | Get supported property list |
-| `0x9203` | `SonyGetDevicePropDesc` | Get property descriptor |
-| `0x9204` | `SonyGetDevicePropValue` | Get property value |
-| `0x9205` | `SetControlDeviceA` | **Immediate set** (exposure, ISO, shutter speed) |
-| `0x9206` | `GetControlDeviceDesc` | Get control descriptor |
-| `0x9207` | `SetControlDeviceB` | **Queued/latching set** (shutter press, MF drive, movie rec) |
-| `0x9209` | `GetAllDevicePropData` | Bulk read all property values at once |
-
----
-
-## Wi-Fi Connection Notes
-
-- Camera SSID format: `DIRECT-xxxx:ILCE-6400` (appears on 2.4GHz)
-- Default gateway once connected: `192.168.122.1`
-- API port: `10000`
-- Liveview stream port: ephemeral (e.g. `60152`), returned by `startLiveview`
-- WPA2-PSK, password shown in camera menu
-
-### Windows — netsh WLAN profile connection
-```powershell
-# See sony-wlan-profile.xml for the full XML template
-netsh wlan add profile filename="sony-wlan-profile.xml" interface="WLAN 2" user=current
-netsh wlan connect name="DIRECT-n6E1:ILCE-6400" interface="WLAN 2"
-```
-
----
-
-## Thanks & Credits
-
-- **[ImagingEdge4Linux](https://github.com/MaxKrauss/ImagingEdge4Linux)** by @MaxKrauss — the SOAP image transfer protocol and original reverse engineering of the `/sony/camera` JSON-RPC API. The `ImagingEdge4Linux/` directory is a modified fork.
-- **[alpha-fairy](https://github.com/frank26080115/alpha-fairy)** by @frank26080115 — deep Sony PTP protocol documentation, IR timecode, device property semantics.
-- **[libgphoto2](https://github.com/gphoto/libgphoto2)** — authoritative Sony PTP property code definitions (`ptp.h`).
-- **[sequoia-ptpy](https://github.com/Parrot-Developers/sequoia-ptpy)** by Parrot — Sony PTP extension property and opcode reference.
-- **[sony-pm-alt](https://github.com/falk0069/sony-pm-alt)** — PTP/IP image transfer protocol research.
-
----
-
-## License
-
-Scripts and notes in this repository are MIT licensed unless a subdirectory contains its own license file.
+Those projects are still the best references for Sony protocol internals beyond the exposed Wi-Fi JSON-RPC surface.

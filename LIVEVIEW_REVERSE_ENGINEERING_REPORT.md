@@ -17,27 +17,33 @@ Date: 2026-03-14
 ## 2) Meaning of the values after `liveviewstream?`
 
 Raw query:
+
 - `%211234%21%2a%3a%2a%3aimage%2fjpeg%3a%2a%21%21%21%21%21`
 
 Decoded query:
+
 - `!1234!*:*:image/jpeg:*!!!!!`
 
 Interpretation:
+
 - This is a Sony-specific token/filter descriptor, not a normal URL query dictionary.
 - `1234` appears to be a session/control token in this stream profile format.
 - `*:*:image/jpeg:*` indicates payload/media-type selection for JPEG frames.
 - Trailing `!` groups are delimiters/fields used by Sony’s stream parser.
 
 Observed behavior:
+
 - The query token remained identical over multiple `startLiveview` calls in the same camera state.
 - The stream still functions correctly, so this token is valid and accepted by the camera.
 
 ## 3) Stream payload structure (from captured sample)
 
 Sample file:
+
 - `e:/Co2Root/liveview-sample.bin`
 
 Findings:
+
 - First frame starts after a 136-byte header block.
 - Data then contains JPEG markers (`FF D8 ... FF D9`) repeatedly.
 - In sample:
@@ -46,6 +52,7 @@ Findings:
 - This confirms the endpoint is a framed Sony stream that embeds JPEG images.
 
 Header observations:
+
 - Byte 0: `FF`
 - Byte 1: `01` (payload type likely JPEG frame packet)
 - Sequence field (bytes 2..3, big-endian) increments per frame: 0,1,2,3...
@@ -55,11 +62,13 @@ Header observations:
 ## 4) Scripts and tools executed
 
 ### Scripts
+
 - `e:/Co2Root/reverse_probe.py` (reconnect + API probe + stream sample capture)
 - `e:/Co2Root/acquire-liveview.ps1` (auto SSID scan/connect/liveview acquisition)
 - `e:/Co2Root/ImagingEdge4Linux/liveview_webui.py` (browser viewing + start/stop recording controls)
 
 ### Reverse tools installed
+
 - `mitmproxy` (version 12.2.1)
 - `scapy`
 
@@ -80,25 +89,30 @@ Header observations:
 ## 7) Notes after reviewing `alpha-fairy`
 
 Reference considered:
-- https://github.com/frank26080115/alpha-fairy/blob/main/doc/Camera-Reverse-Engineering.md
+
+- <https://github.com/frank26080115/alpha-fairy/blob/main/doc/Camera-Reverse-Engineering.md>
 
 What maps to our findings:
+
 - Sony HTTP JSON-RPC is proprietary and camera-dependent in behavior.
 - Liveview payload is not a direct browser JPEG stream; it includes Sony framing before JPEG bytes.
 - This matches our dump where each frame has a 136-byte preamble before `FF D8`.
 
 Token interpretation refinement:
+
 - `!1234!*:*:image/jpeg:*!!!!!` behaves as an opaque Sony selector string.
 - It should be treated as a full opaque token returned by `startLiveview` and not modified.
 
 ## 8) About the "dark brown stationary" symptom
 
 Diagnostics run on captured frames:
+
 - Extracted 10 live frames from the stream.
 - Mean brightness around ~106/255 (not black).
 - Inter-frame absolute difference ~0.686 (small, but non-zero), indicating slight motion/noise.
 
 Interpretation:
+
 - Stream is decoding correctly.
 - Symptom is more likely one of:
   1. Browser/player showing only the initial Sony header chunk as a stale image.
@@ -106,5 +120,62 @@ Interpretation:
   3. Camera in a mode that suppresses preview dynamics.
 
 Mitigation implemented:
+
 - Updated web UI to serve latest decoded JPEG at `/frame.jpg` and poll at ~150ms.
 - This avoids browser MJPEG quirks and makes frame updates explicit.
+
+## 9) Search for a higher-quality Wi-Fi liveview path
+
+Additional references reviewed:
+
+- `ma1co/Sony-PMCA-RE`
+- `frank26080115/alpha-fairy`
+- OpenMemories docs
+
+Specific candidates searched for:
+
+- `startLiveviewWithSize`
+- `getAvailableLiveviewSize`
+- `liveviewSize`
+- `setLiveviewFrameInfo`
+
+Current result:
+
+- No confirmed higher-quality Wi-Fi JSON-RPC liveview selector was found for the a6400 in this workflow.
+- Public reverse-engineering references point more toward USB/service-mode/firmware tooling than to a hidden ordinary Wi-Fi method.
+
+Operational conclusion:
+
+- For this project, the live preview path remains the Sony framed JPEG preview stream.
+- It is usable for operator preview and Frigate detection input.
+- It should not be treated as equivalent to true recording quality.
+
+## 10) Frigate-triggered SD-card recording
+
+Goal:
+
+- Use Frigate detections to trigger recording on the camera SD card, instead of saving the low-quality preview stream.
+
+Implemented pieces:
+
+- Local relay for Frigate ingestion
+- Authenticated Frigate event polling
+- Bridge endpoints for `startMovieRec` / `stopMovieRec`
+- Trigger loop with retry cooldown to avoid hammering the camera control endpoint
+
+Current state:
+
+- Frigate authentication and polling work.
+- Bridge preview streaming works.
+- Camera control remains the weak point: preview frames can continue while `startMovieRec` intermittently fails or hangs.
+
+Most useful bridge hardening so far:
+
+- Added subprocess timeouts to Windows Wi-Fi helper commands
+- Stopped forcing reconnects when recent camera activity proves the link is still alive
+- Kept `/api/status` responsive during control-path trouble
+
+Current best interpretation:
+
+- Windows Wi-Fi status reporting and Sony control readiness can temporarily diverge from ongoing preview traffic.
+- The bridge should treat recent liveview frame activity as evidence that reconnect is unnecessary.
