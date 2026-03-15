@@ -72,6 +72,8 @@ Typical local startup:
 - Run [start_sony_frigate_wizard_bridge.ps1](start_sony_frigate_wizard_bridge.ps1)
 - Open the bridge UI or point Frigate at the emitted RTSP URL
 
+For the isolated TrueNAS SCALE VM path, use [TRUENAS_VM_DEPLOYMENT.md](TRUENAS_VM_DEPLOYMENT.md).
+
 When you want to browse camera files instead:
 
 - Put the camera in `Send to Smartphone / Sharing`

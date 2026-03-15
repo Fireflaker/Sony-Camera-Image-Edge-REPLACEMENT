@@ -63,7 +63,7 @@ class SonyCameraClient:
 
 
 class AppState:
-    def __init__(self, camera: SonyCameraClient, wifi_interface: str = "WLAN 2", wifi_password: str | None = None):
+    def __init__(self, camera: SonyCameraClient, wifi_interface: str = "auto", wifi_password: str | None = None):
         self.camera = camera
         self.lock = threading.RLock()
         self.liveview_url = None
@@ -103,6 +103,7 @@ class AppState:
         self.transfer_bundle_ts = None
         self.transfer_bundle_building = False
         self.transfer_bundle_thread = None
+        self.platform_is_windows = os.name == "nt"
 
     def _has_recent_camera_activity(self, now: float | None = None, max_age_seconds: float = 8.0):
         current = time.time() if now is None else now
@@ -151,7 +152,38 @@ class AppState:
         self.transfer_bundle_building = False
         self.transfer_bundle_thread = None
 
-    def _connected_ssid(self, iface: str):
+    def _extract_camera_ssids(self, text: str):
+        matches = []
+        seen = set()
+        for line in (text or "").splitlines():
+            for match in re.finditer(r"DIRECT-[^\r\n]+", line, re.IGNORECASE):
+                ssid = match.group(0).strip().strip('"')
+                if ssid and ssid not in seen:
+                    seen.add(ssid)
+                    matches.append(ssid)
+        return matches
+
+    def _resolve_wifi_interface(self):
+        iface = (self.wifi_interface or "").strip()
+        if iface and iface.lower() != "auto":
+            return iface
+
+        if self.platform_is_windows:
+            _, out = self._run("netsh wlan show interfaces")
+            name_m = re.search(r"^\s*Name\s*:\s*(.+)$", out, re.MULTILINE)
+            return name_m.group(1).strip() if name_m else None
+
+        rc, out = self._run("nmcli -t -f DEVICE,TYPE device status")
+        if rc != 0:
+            return None
+
+        for line in out.splitlines():
+            parts = line.strip().split(":")
+            if len(parts) >= 2 and parts[0] and parts[1] == "wifi":
+                return parts[0]
+        return None
+
+    def _connected_ssid_windows(self, iface: str):
         _, out = self._run(f'netsh wlan show interfaces interface="{iface}"')
         state_m = re.search(r"^\s*State\s*:\s*(.+)$", out, re.MULTILINE)
         ssid_m = re.search(r"^\s*SSID\s*:\s*(.+)$", out, re.MULTILINE)
@@ -161,38 +193,54 @@ class AppState:
             return ssid
         return None
 
-    def _find_camera_ssid(self, iface: str, max_wait=6):
+    def _connected_ssid_linux(self, iface: str):
+        rc, out = self._run(f'nmcli -t -g GENERAL.STATE,GENERAL.CONNECTION device show "{iface}"')
+        if rc != 0:
+            return None
+
+        state = ""
+        connection = None
+        lines = [line.strip() for line in out.splitlines() if line.strip()]
+        if len(lines) >= 1:
+            state = lines[0]
+        if len(lines) >= 2:
+            connection = lines[1]
+        if state.startswith("100") and connection and connection.upper().startswith("DIRECT-"):
+            return connection
+        return None
+
+    def _connected_ssid(self, iface: str):
+        if self.platform_is_windows:
+            return self._connected_ssid_windows(iface)
+        return self._connected_ssid_linux(iface)
+
+    def _find_camera_ssid_windows(self, iface: str, max_wait=6):
         end = time.time() + max_wait
         while time.time() < end:
             _, txt = self._run(f'netsh wlan show networks mode=bssid interface="{iface}"')
-            m = re.search(r"DIRECT-[^\r\n]*ILCE-6400", txt)
-            if m:
-                return m.group(0)
+            matches = self._extract_camera_ssids(txt)
+            if matches:
+                return matches[0]
             time.sleep(1)
         return None
 
-    def ensure_wifi_direct_connected(self):
-        now = time.time()
-        if now - self.last_wifi_check < self.wifi_check_interval_seconds:
-            return True
+    def _find_camera_ssid_linux(self, iface: str, max_wait=6):
+        end = time.time() + max_wait
+        while time.time() < end:
+            rc, txt = self._run(f'nmcli -t -f SSID device wifi list ifname "{iface}" --rescan yes', timeout=15)
+            if rc == 0:
+                matches = self._extract_camera_ssids(txt)
+                if matches:
+                    return matches[0]
+            time.sleep(1)
+        return None
 
-        self.last_wifi_check = now
+    def _find_camera_ssid(self, iface: str, max_wait=6):
+        if self.platform_is_windows:
+            return self._find_camera_ssid_windows(iface, max_wait=max_wait)
+        return self._find_camera_ssid_linux(iface, max_wait=max_wait)
 
-        # Never disconnect first. Keep existing Wi-Fi Direct if already up.
-        connected = self._connected_ssid(self.wifi_interface)
-        if connected:
-            return True
-
-        # If preview frames are still arriving, allow control calls to continue.
-        # On some Windows adapter states, netsh SSID reporting can lag briefly.
-        if self._has_recent_camera_activity(now=now):
-            return True
-
-        target_ssid = self._find_camera_ssid(self.wifi_interface)
-        if not target_ssid:
-            self.last_camera_error = f"Camera SSID not found on {self.wifi_interface}"
-            return False
-
+    def _connect_windows(self, iface: str, target_ssid: str):
         if self.wifi_password:
             xml = f'''<?xml version="1.0"?>
 <WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
@@ -203,21 +251,63 @@ class AppState:
   <MSM><security><authEncryption><authentication>WPA2PSK</authentication><encryption>AES</encryption><useOneX>false</useOneX></authEncryption><sharedKey><keyType>passPhrase</keyType><protected>false</protected><keyMaterial>{self.wifi_password}</keyMaterial></sharedKey></security></MSM>
 </WLANProfile>
 '''
-            xml_path = "e:\\Co2Root\\sony-wlan-profile.xml"
+            xml_path = os.path.join(tempfile.gettempdir(), "sony-wlan-profile.xml")
             with open(xml_path, "w", encoding="ascii") as f:
                 f.write(xml)
-            self._run(f'netsh wlan add profile filename="{xml_path}" interface="{self.wifi_interface}" user=current')
+            self._run(f'netsh wlan add profile filename="{xml_path}" interface="{iface}" user=current')
 
-        _, connect_out = self._run(
-            f'netsh wlan connect name="{target_ssid}" ssid="{target_ssid}" interface="{self.wifi_interface}"'
+        return self._run(
+            f'netsh wlan connect name="{target_ssid}" ssid="{target_ssid}" interface="{iface}"'
         )
+
+    def _connect_linux(self, iface: str, target_ssid: str):
+        self._run("nmcli radio wifi on")
+        password_arg = f' password "{self.wifi_password}"' if self.wifi_password else ""
+        return self._run(
+            f'nmcli device wifi connect "{target_ssid}" ifname "{iface}"{password_arg}',
+            timeout=20,
+        )
+
+    def _connect_to_camera_ssid(self, iface: str, target_ssid: str):
+        if self.platform_is_windows:
+            return self._connect_windows(iface, target_ssid)
+        return self._connect_linux(iface, target_ssid)
+
+    def ensure_wifi_direct_connected(self):
+        now = time.time()
+        if now - self.last_wifi_check < self.wifi_check_interval_seconds:
+            return True
+
+        self.last_wifi_check = now
+
+        iface = self._resolve_wifi_interface()
+        if not iface:
+            self.last_camera_error = "No usable Wi-Fi interface found"
+            return False
+
+        # Never disconnect first. Keep existing Wi-Fi Direct if already up.
+        connected = self._connected_ssid(iface)
+        if connected:
+            return True
+
+        # If preview frames are still arriving, allow control calls to continue.
+        # On some Windows adapter states, netsh SSID reporting can lag briefly.
+        if self._has_recent_camera_activity(now=now):
+            return True
+
+        target_ssid = self._find_camera_ssid(iface)
+        if not target_ssid:
+            self.last_camera_error = f"Camera SSID not found on {iface}"
+            return False
+
+        _, connect_out = self._connect_to_camera_ssid(iface, target_ssid)
 
         # Allow association to settle; "request completed successfully" can still
         # need a few extra seconds before netsh reports connected state.
         connected_after = None
         for _ in range(8):
             time.sleep(1)
-            connected_after = self._connected_ssid(self.wifi_interface)
+            connected_after = self._connected_ssid(iface)
             if connected_after:
                 self.last_camera_error = None
                 return True
@@ -227,7 +317,7 @@ class AppState:
             self.last_camera_error = None
             return True
 
-        self.last_camera_error = f"Wi-Fi Direct connect failed on {self.wifi_interface}: {connect_out.strip()}"
+        self.last_camera_error = f"Wi-Fi Direct connect failed on {iface}: {connect_out.strip()}"
         return False
 
     def _ensure_grabber_thread(self):
@@ -2571,7 +2661,7 @@ def main():
     parser = argparse.ArgumentParser(description="Watch Sony camera liveview in browser with recording controls")
     parser.add_argument("--address", default="192.168.122.1", help="Camera IP address")
     parser.add_argument("--camera-port", type=int, default=10000, help="Sony JSON API port")
-    parser.add_argument("--wifi-interface", default="WLAN 2", help="Wi-Fi adapter used for camera Wi-Fi Direct")
+    parser.add_argument("--wifi-interface", default="auto", help="Wi-Fi adapter used for camera Wi-Fi Direct, or 'auto' to detect it")
     parser.add_argument("--wifi-password", default=None, help="Camera Wi-Fi Direct password (optional, for auto-connect)")
     parser.add_argument("--listen", default="127.0.0.1", help="Web UI bind address")
     parser.add_argument("--port", type=int, default=8765, help="Web UI port")
