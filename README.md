@@ -1,6 +1,7 @@
 # Sony Camera Imaging Edge Replacement
 
 This workspace contains a Windows-first replacement workflow for Sony Imaging Edge Mobile, centered on a Sony a6400, a local browser bridge, and an optional Frigate integration that can trigger recording on the camera itself.
+<img width="764" height="883" alt="image" src="https://github.com/user-attachments/assets/ada9bbce-54b4-4db4-82fd-120f12866ae9" />
 
 ## What works now
 
