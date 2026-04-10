@@ -13,7 +13,7 @@ Generated: 2026-03-14 | Camera: ILCE-6400, firmware 2.0
 ## PTP Opcodes (Sony Proprietary — USB transport, opcode range 0x9200–0x9209)
 
 | Opcode | libgphoto2 Name | Description |
-|--------|----------------|-------------|
+| --- | --- | --- |
 | `0x9201` | `SONY_SDIO_Connect` | Auth handshake. Call with params `(1,0,0)`, then `(2,0,0)`, then `(3,0,0)` |
 | `0x9202` | `SONY_SDIO_GetExtDeviceInfo` | Returns list of supported property codes |
 | `0x9203` | `SONY_GetDevicePropdesc` | Get full descriptor for one property |
@@ -32,12 +32,14 @@ Generated: 2026-03-14 | Camera: ILCE-6400, firmware 2.0
 ## SetControlDeviceA vs SetControlDeviceB
 
 **SetControlDeviceA (0x9205)** — Immediate value set, used for:
+
 - Exposure settings (ISO, shutter speed, aperture, EV compensation)
 - Image quality settings
 - White balance
 - Drive mode
 
 **SetControlDeviceB (0x9207)** — Queued/latching, used for:
+
 - Shutter button simulation (half-press, full-press, release)
 - Movie record start/stop
 - Manual focus drive steps
@@ -48,7 +50,7 @@ Generated: 2026-03-14 | Camera: ILCE-6400, firmware 2.0
 ## Device Properties — Status / Read-Only
 
 | Code | libgphoto2 Name | gphoto2 Path | Current (a6400) | Notes |
-|------|----------------|--------------|-----------------|-------|
+| --- | --- | --- | --- | --- |
 | `0xD213` | `FocusFound` | `/main/other/d213` | 1 | 1=searching, 2=locked, 3=failed |
 | `0xD214` | `Zoom` | `/main/other/d214` | 3.44975e+07 | Focal length × 1,000,000 (34.4mm) |
 | `0xD215` | `ObjectInMemory` | `/main/other/d215` | 0 | Non-zero = new image ready to download |
@@ -68,7 +70,7 @@ Generated: 2026-03-14 | Camera: ILCE-6400, firmware 2.0
 ## Device Properties — Read/Write (SetControlDeviceA)
 
 | Code | libgphoto2 Name | gphoto2 Path | a6400 Value | Notes |
-|------|----------------|--------------|-------------|-------|
+| --- | --- | --- | --- | --- |
 | `0xD200` | `DPCCompensation` | `/main/other/d200` | 0 | Exposure compensation (DPC) |
 | `0xD201` | `DRangeOptimize` | `/main/other/d201` | 31 | D-Range Optimizer / Auto HDR; 1=off, 16=auto, 17–22=Lv1–Lv5, 31=Auto HDR |
 | `0xD203` | `ImageSize` | `/main/other/d203` | — | JPEG image size |
@@ -91,7 +93,7 @@ Generated: 2026-03-14 | Camera: ILCE-6400, firmware 2.0
 These are "button" properties written as 1=press or 2=release (some cameras use 1=activate only).
 
 | Code | libgphoto2 Name | gphoto2 Path | Semantics |
-|------|----------------|--------------|-----------|
+| --- | --- | --- | --- |
 | `0xD2C1` | `ShutterHalfRelease` | `/main/actions/autofocus` | **S1 half-press** — 2=press, 1=release |
 | `0xD2C2` | `ShutterRelease` | `/main/actions/capture` | **S2 full-press** — 2=press, 1=release |
 | `0xD2C3` | `AELButton` | `/main/other/d2c3` | AE Lock button — 2=press, 1=release |
@@ -118,7 +120,7 @@ These are "button" properties written as 1=press or 2=release (some cameras use 
 ## Device Properties — Focus Magnifier Group
 
 | Code | libgphoto2 Name | Notes |
-|------|----------------|-------|
+| --- | --- | --- |
 | `0xD22D` | `FocusMagnifierStatus` | 0=off, 1=active, 2=magnified view |
 | `0xD22F` | `CurrentFocusMagnifierRatio` | Magnification ratio (e.g. 59 ≈ 5.9×) |
 | `0xD230` | `FocusMagnifierPosition` | XY position of magnifier box (packed uint32) |
@@ -130,7 +132,7 @@ These are "button" properties written as 1=press or 2=release (some cameras use 
 These codes appeared in the live a6400 `gphoto2 --list-all-config` dump but are NOT yet in libgphoto2's `ptp.h`. Best guesses from value ranges:
 
 | Code | Value Range on a6400 | Best Guess |
-|------|---------------------|------------|
+| --- | --- | --- |
 | `0xD212` | enum 0–15, current ~3 | **DriveMode** (single/burst/bracket/self-timer) |
 | `0xD22E` | 0–255, current 59 | **CurrentFocusMagnifierPhase** or step position |
 | `0xD232` | large uint32 (≈0x013FFFFF) | **FocusMagnifierPosition2** or display bounding box |
@@ -191,7 +193,7 @@ SetControlDeviceB(0xD2D1, 7)
 The Parrot library used drone-oriented labels. libgphoto2 has the canonical camera names:
 
 | Code | Parrot Label | libgphoto2 Canonical Name |
-|------|-------------|--------------------------|
+| --- | --- | --- |
 | `0xD2C1` | `AutoFocus` | `ShutterHalfRelease` (S1 half-press) |
 | `0xD2C2` | `Capture` | `ShutterRelease` (S2 full-press) |
 | `0xD2C7` | `StillImage` | `RequestOneShooting` |

@@ -1,7 +1,7 @@
 # Sony Camera Imaging Edge Replacement
 
 This workspace contains a replacement workflow for Sony Imaging Edge Mobile, centered on a Sony a6400, a local browser bridge, and an optional Frigate integration that can trigger recording on the camera itself. It allows us to later use sony as an ip camera once full toolchain is up.(it is, in next repository, standalone in Truenas Scale)
-<img width="764" height="883" alt="image" src="https://github.com/user-attachments/assets/ada9bbce-54b4-4db4-82fd-120f12866ae9" />
+![Sony Camera Workflow Diagram](https://github.com/user-attachments/assets/ada9bbce-54b4-4db4-82fd-120f12866ae9)
 
 ## What works now
 
