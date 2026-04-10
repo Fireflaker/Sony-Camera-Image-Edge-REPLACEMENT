@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import socket
 import tempfile
 import subprocess
 import threading
@@ -140,6 +141,11 @@ class AppState:
         s = re.sub(r'[\\/:*?"<>|]+', '_', str(text or '').strip())
         return s or 'unnamed'
 
+    def _normalize_ssid(self, ssid: str):
+        # nmcli -t escapes separators like ':' as '\:'.
+        # Convert escaped separators back to literal SSID characters.
+        return re.sub(r'\\([:\\\\])', r'\1', str(ssid or ''))
+
     def _cleanup_transfer_bundle(self):
         if self.transfer_bundle_path and os.path.isfile(self.transfer_bundle_path):
             try:
@@ -157,7 +163,7 @@ class AppState:
         seen = set()
         for line in (text or "").splitlines():
             for match in re.finditer(r"DIRECT-[^\r\n]+", line, re.IGNORECASE):
-                ssid = match.group(0).strip().strip('"')
+                ssid = self._normalize_ssid(match.group(0).strip().strip('"'))
                 if ssid and ssid not in seen:
                     seen.add(ssid)
                     matches.append(ssid)
@@ -213,6 +219,13 @@ class AppState:
         if self.platform_is_windows:
             return self._connected_ssid_windows(iface)
         return self._connected_ssid_linux(iface)
+
+    def _camera_control_port_reachable(self, timeout: float = 2.5):
+        try:
+            with socket.create_connection((self.camera.address, self.camera.port), timeout=timeout):
+                return True
+        except OSError:
+            return False
 
     def _find_camera_ssid_windows(self, iface: str, max_wait=6):
         end = time.time() + max_wait
@@ -288,11 +301,17 @@ class AppState:
         # Never disconnect first. Keep existing Wi-Fi Direct if already up.
         connected = self._connected_ssid(iface)
         if connected:
+            self.last_camera_error = None
+            return True
+
+        if self._camera_control_port_reachable():
+            self.last_camera_error = None
             return True
 
         # If preview frames are still arriving, allow control calls to continue.
         # On some Windows adapter states, netsh SSID reporting can lag briefly.
         if self._has_recent_camera_activity(now=now):
+            self.last_camera_error = None
             return True
 
         target_ssid = self._find_camera_ssid(iface)
